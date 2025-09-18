@@ -12,6 +12,8 @@ wheels/
 
 # Environment variables
 .env
+.env.*
+!.env.example
 .env.development
 .env.staging
 .env.production
