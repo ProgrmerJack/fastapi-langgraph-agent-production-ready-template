@@ -1,6 +1,5 @@
 """Evaluator for evals."""
 
-import asyncio
 import os
 import sys
 import time
@@ -46,8 +45,13 @@ class Evaluator:
 
     def __init__(self):
         """Initialize Evaluator with OpenAI and Langfuse clients."""
-        self.client = openai.AsyncOpenAI(api_key=settings.EVALUATION_API_KEY, base_url=settings.EVALUATION_BASE_URL)
-        self.langfuse = Langfuse(public_key=settings.LANGFUSE_PUBLIC_KEY, secret_key=settings.LANGFUSE_SECRET_KEY)
+        self.client = openai.AsyncOpenAI(
+            api_key=settings.EVALUATION_API_KEY, base_url=settings.EVALUATION_BASE_URL
+        )
+        self.langfuse = Langfuse(
+            public_key=settings.LANGFUSE_PUBLIC_KEY,
+            secret_key=settings.LANGFUSE_SECRET_KEY,
+        )
         # Initialize report data structure
         self.report = initialize_report(settings.EVALUATION_LLM)
         initialize_metrics_summary(self.report, metrics)
@@ -62,12 +66,12 @@ class Evaluator:
             generate_report_file: Whether to generate a JSON report after evaluation. Defaults to True.
         """
         start_time = time.time()
-        traces = self.__fetch_traces()
+        traces = tqdm(self.__fetch_traces(), desc="Evaluating traces")
         self.report["total_traces"] = len(traces)
 
         trace_results = {}
 
-        for trace in tqdm(traces, desc="Evaluating traces"):
+        for trace in traces:
             trace_id = trace.id
             trace_results[trace_id] = {
                 "success": False,
@@ -76,16 +80,24 @@ class Evaluator:
                 "metrics_results": {},
             }
 
-            for metric in tqdm(metrics, desc=f"Applying metrics to trace {trace_id[:8]}...", leave=False):
+            for metric in tqdm(
+                metrics,
+                desc=f"Applying metrics to trace {trace_id[:8]}...",
+                leave=False,
+            ):
                 metric_name = metric["name"]
                 input, output = get_input_output(trace)
                 score = await self._run_metric_evaluation(metric, input, output)
 
                 if score:
                     self._push_to_langfuse(trace, score, metric)
-                    update_success_metrics(self.report, trace_id, metric_name, score, trace_results)
+                    update_success_metrics(
+                        self.report, trace_id, metric_name, score, trace_results
+                    )
                 else:
-                    update_failure_metrics(self.report, trace_id, metric_name, trace_results)
+                    update_failure_metrics(
+                        self.report, trace_id, metric_name, trace_results
+                    )
 
                 trace_results[trace_id]["metrics_evaluated"] += 1
 
@@ -106,7 +118,9 @@ class Evaluator:
             duration_seconds=self.report["duration_seconds"],
         )
 
-    def _push_to_langfuse(self, trace: TraceWithDetails, score: ScoreSchema, metric: dict):
+    def _push_to_langfuse(
+        self, trace: TraceWithDetails, score: ScoreSchema, metric: dict
+    ):
         """Push evaluation score to Langfuse.
 
         Args:
@@ -122,7 +136,9 @@ class Evaluator:
             comment=score.reasoning,
         )
 
-    async def _run_metric_evaluation(self, metric: dict, input: str, output: str) -> ScoreSchema | None:
+    async def _run_metric_evaluation(
+        self, metric: dict, input: str, output: str
+    ) -> ScoreSchema | None:
         """Evaluate a single trace against a specific metric.
 
         Args:
@@ -140,16 +156,22 @@ class Evaluator:
         system_metric_prompt = metric["prompt"]
 
         if not input or not output:
-            logger.error(f"Metric {metric_name} evaluation failed", input=input, output=output)
+            logger.error(
+                f"Metric {metric_name} evaluation failed", input=input, output=output
+            )
             return None
         score = await self._call_openai(system_metric_prompt, input, output)
         if score:
-            logger.info(f"Metric {metric_name} evaluation completed successfully", score=score)
+            logger.info(
+                f"Metric {metric_name} evaluation completed successfully", score=score
+            )
         else:
             logger.error(f"Metric {metric_name} evaluation failed")
         return score
 
-    async def _call_openai(self, metric_system_prompt: str, input: str, output: str) -> ScoreSchema | None:
+    async def _call_openai(
+        self, metric_system_prompt: str, input: str, output: str
+    ) -> ScoreSchema | None:
         """Call OpenAI API to evaluate a trace.
 
         Args:
@@ -167,14 +189,19 @@ class Evaluator:
                     model=settings.EVALUATION_LLM,
                     messages=[
                         {"role": "system", "content": metric_system_prompt},
-                        {"role": "user", "content": f"Input: {input}\nGeneration: {output}"},
+                        {
+                            "role": "user",
+                            "content": f"Input: {input}\nGeneration: {output}",
+                        },
                     ],
                     response_format=ScoreSchema,
                 )
                 return response.choices[0].message.parsed
             except Exception as e:
                 SLEEP_TIME = 10
-                logger.error("Error calling OpenAI", error=str(e), sleep_time=SLEEP_TIME)
+                logger.error(
+                    "Error calling OpenAI", error=str(e), sleep_time=SLEEP_TIME
+                )
                 sleep(SLEEP_TIME)
                 continue
         return None

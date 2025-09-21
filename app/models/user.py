@@ -35,14 +35,12 @@ class User(BaseModel, table=True):
 
     def verify_password(self, password: str) -> bool:
         """Verify if the provided password matches the hash."""
-        return bcrypt.checkpw(password.encode("utf-8"), self.hashed_password.encode("utf-8"))
+        return bcrypt.checkpw(
+            password.encode("utf-8"), self.hashed_password.encode("utf-8")
+        )
 
     @staticmethod
     def hash_password(password: str) -> str:
         """Hash a password using bcrypt."""
         salt = bcrypt.gensalt()
         return bcrypt.hashpw(password.encode("utf-8"), salt).decode("utf-8")
-
-
-# Avoid circular imports
-from app.models.session import Session  # noqa: E402

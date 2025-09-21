@@ -16,7 +16,6 @@ from colorama import (
     Fore,
     Style,
 )
-from tqdm import tqdm
 
 # Fix import path for app module
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -159,7 +158,9 @@ def display_summary(report: Dict[str, Any]) -> None:
         )
 
     if report["generate_report_path"]:
-        print(f"\n{Fore.CYAN}Report generated at:{Style.RESET_ALL} {report['generate_report_path']}")
+        print(
+            f"\n{Fore.CYAN}Report generated at:{Style.RESET_ALL} {report['generate_report_path']}"
+        )
 
 
 async def run_evaluation(generate_report: bool = True) -> None:
@@ -213,13 +214,20 @@ def interactive_mode() -> None:
     # Display current configuration
     display_configuration(config)
 
-    print("\n" + f"{Fore.CYAN}Configuration Options (press Enter to accept defaults):{Style.RESET_ALL}")
+    print(
+        "\n"
+        + f"{Fore.CYAN}Configuration Options (press Enter to accept defaults):{Style.RESET_ALL}"
+    )
 
     # Allow user to change configuration or accept defaults
-    change_config = get_yes_no("Would you like to change the default configuration?", default=False)
+    change_config = get_yes_no(
+        "Would you like to change the default configuration?", default=False
+    )
 
     if change_config:
-        config["generate_report"] = get_yes_no("Generate JSON report?", default=config["generate_report"])
+        config["generate_report"] = get_yes_no(
+            "Generate JSON report?", default=config["generate_report"]
+        )
 
     print("\n")
     confirm = get_yes_no("Ready to start evaluation with these settings?", default=True)
@@ -250,9 +258,17 @@ def quick_mode() -> None:
 def main() -> None:
     """Main entry point for the command-line interface."""
     parser = argparse.ArgumentParser(description="Run evaluations on model outputs")
-    parser.add_argument("--no-report", action="store_true", help="Don't generate a JSON report")
-    parser.add_argument("--interactive", action="store_true", help="Run in interactive mode")
-    parser.add_argument("--quick", action="store_true", help="Run with all default settings (no prompts)")
+    parser.add_argument(
+        "--no-report", action="store_true", help="Don't generate a JSON report"
+    )
+    parser.add_argument(
+        "--interactive", action="store_true", help="Run in interactive mode"
+    )
+    parser.add_argument(
+        "--quick",
+        action="store_true",
+        help="Run with all default settings (no prompts)",
+    )
 
     args = parser.parse_args()
 

@@ -95,7 +95,9 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     # Format the errors to be more user-friendly
     formatted_errors = []
     for error in exc.errors():
-        loc = " -> ".join([str(loc_part) for loc_part in error["loc"] if loc_part != "body"])
+        loc = " -> ".join(
+            [str(loc_part) for loc_part in error["loc"] if loc_part != "body"]
+        )
         formatted_errors.append({"field": loc, "message": error["msg"]})
 
     return JSONResponse(
@@ -149,11 +151,16 @@ async def health_check(request: Request) -> Dict[str, Any]:
         "status": "healthy" if db_healthy else "degraded",
         "version": settings.VERSION,
         "environment": settings.ENVIRONMENT.value,
-        "components": {"api": "healthy", "database": "healthy" if db_healthy else "unhealthy"},
+        "components": {
+            "api": "healthy",
+            "database": "healthy" if db_healthy else "unhealthy",
+        },
         "timestamp": datetime.now().isoformat(),
     }
 
     # If DB is unhealthy, set the appropriate status code
-    status_code = status.HTTP_200_OK if db_healthy else status.HTTP_503_SERVICE_UNAVAILABLE
+    status_code = (
+        status.HTTP_200_OK if db_healthy else status.HTTP_503_SERVICE_UNAVAILABLE
+    )
 
     return JSONResponse(content=response, status_code=status_code)

@@ -65,7 +65,11 @@ class LangGraphAgent:
         self._connection_pool: Optional[AsyncConnectionPool] = None
         self._graph: Optional[CompiledStateGraph] = None
 
-        logger.info("llm_initialized", model=settings.LLM_MODEL, environment=settings.ENVIRONMENT.value)
+        logger.info(
+            "llm_initialized",
+            model=settings.LLM_MODEL,
+            environment=settings.ENVIRONMENT.value,
+        )
 
     def _get_model_kwargs(self) -> Dict[str, Any]:
         """Get environment-specific model kwargs.
@@ -109,12 +113,23 @@ class LangGraphAgent:
                     },
                 )
                 await self._connection_pool.open()
-                logger.info("connection_pool_created", max_size=max_size, environment=settings.ENVIRONMENT.value)
+                logger.info(
+                    "connection_pool_created",
+                    max_size=max_size,
+                    environment=settings.ENVIRONMENT.value,
+                )
             except Exception as e:
-                logger.error("connection_pool_creation_failed", error=str(e), environment=settings.ENVIRONMENT.value)
+                logger.error(
+                    "connection_pool_creation_failed",
+                    error=str(e),
+                    environment=settings.ENVIRONMENT.value,
+                )
                 # In production, we might want to degrade gracefully
                 if settings.ENVIRONMENT == Environment.PRODUCTION:
-                    logger.warning("continuing_without_connection_pool", environment=settings.ENVIRONMENT.value)
+                    logger.warning(
+                        "continuing_without_connection_pool",
+                        environment=settings.ENVIRONMENT.value,
+                    )
                     return None
                 raise e
         return self._connection_pool
@@ -137,8 +152,12 @@ class LangGraphAgent:
 
         for attempt in range(max_retries):
             try:
-                with llm_inference_duration_seconds.labels(model=self.llm.model_name).time():
-                    generated_state = {"messages": [await self.llm.ainvoke(dump_messages(messages))]}
+                with llm_inference_duration_seconds.labels(
+                    model=self.llm.model_name
+                ).time():
+                    generated_state = {
+                        "messages": [await self.llm.ainvoke(dump_messages(messages))]
+                    }
                 logger.info(
                     "llm_response_generated",
                     session_id=state.session_id,
@@ -159,16 +178,23 @@ class LangGraphAgent:
                 llm_calls_num += 1
 
                 # In production, we might want to fall back to a more reliable model
-                if settings.ENVIRONMENT == Environment.PRODUCTION and attempt == max_retries - 2:
+                if (
+                    settings.ENVIRONMENT == Environment.PRODUCTION
+                    and attempt == max_retries - 2
+                ):
                     fallback_model = "gpt-4o"
                     logger.warning(
-                        "using_fallback_model", model=fallback_model, environment=settings.ENVIRONMENT.value
+                        "using_fallback_model",
+                        model=fallback_model,
+                        environment=settings.ENVIRONMENT.value,
                     )
                     self.llm.model_name = fallback_model
 
                 continue
 
-        raise Exception(f"Failed to get a response from the LLM after {max_retries} attempts")
+        raise Exception(
+            f"Failed to get a response from the LLM after {max_retries} attempts"
+        )
 
     # Define our tool node
     async def _tool_call(self, state: GraphState) -> GraphState:
@@ -182,7 +208,9 @@ class LangGraphAgent:
         """
         outputs = []
         for tool_call in state.messages[-1].tool_calls:
-            tool_result = await self.tools_by_name[tool_call["name"]].ainvoke(tool_call["args"])
+            tool_result = await self.tools_by_name[tool_call["name"]].ainvoke(
+                tool_call["args"]
+            )
             outputs.append(
                 ToolMessage(
                     content=tool_result,
@@ -242,7 +270,8 @@ class LangGraphAgent:
                         raise Exception("Connection pool initialization failed")
 
                 self._graph = graph_builder.compile(
-                    checkpointer=checkpointer, name=f"{settings.PROJECT_NAME} Agent ({settings.ENVIRONMENT.value})"
+                    checkpointer=checkpointer,
+                    name=f"{settings.PROJECT_NAME} Agent ({settings.ENVIRONMENT.value})",
                 )
 
                 logger.info(
@@ -252,7 +281,11 @@ class LangGraphAgent:
                     has_checkpointer=checkpointer is not None,
                 )
             except Exception as e:
-                logger.error("graph_creation_failed", error=str(e), environment=settings.ENVIRONMENT.value)
+                logger.error(
+                    "graph_creation_failed",
+                    error=str(e),
+                    environment=settings.ENVIRONMENT.value,
+                )
                 # In production, we don't want to crash the app
                 if settings.ENVIRONMENT == Environment.PRODUCTION:
                     logger.warning("continuing_without_graph")
@@ -315,7 +348,10 @@ class LangGraphAgent:
             "configurable": {"thread_id": session_id},
             "callbacks": [
                 CallbackHandler(
-                    environment=settings.ENVIRONMENT.value, debug=False, user_id=user_id, session_id=session_id
+                    environment=settings.ENVIRONMENT.value,
+                    debug=False,
+                    user_id=user_id,
+                    session_id=session_id,
                 )
             ],
         }
@@ -324,16 +360,26 @@ class LangGraphAgent:
 
         try:
             async for token, _ in self._graph.astream(
-                {"messages": dump_messages(messages), "session_id": session_id}, config, stream_mode="messages"
+                {"messages": dump_messages(messages), "session_id": session_id},
+                config,
+                stream_mode="messages",
             ):
                 try:
                     yield token.content
                 except Exception as token_error:
-                    logger.error("Error processing token", error=str(token_error), session_id=session_id)
+                    logger.error(
+                        "Error processing token",
+                        error=str(token_error),
+                        session_id=session_id,
+                    )
                     # Continue with next token even if current one fails
                     continue
         except Exception as stream_error:
-            logger.error("Error in stream processing", error=str(stream_error), session_id=session_id)
+            logger.error(
+                "Error in stream processing",
+                error=str(stream_error),
+                session_id=session_id,
+            )
             raise stream_error
 
     async def get_chat_history(self, session_id: str) -> list[Message]:
@@ -379,7 +425,9 @@ class LangGraphAgent:
             async with conn_pool.connection() as conn:
                 for table in settings.CHECKPOINT_TABLES:
                     try:
-                        await conn.execute(f"DELETE FROM {table} WHERE thread_id = %s", (session_id,))
+                        await conn.execute(
+                            f"DELETE FROM {table} WHERE thread_id = %s", (session_id,)
+                        )
                         logger.info(f"Cleared {table} for session {session_id}")
                     except Exception as e:
                         logger.error(f"Error clearing {table}", error=str(e))

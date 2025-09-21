@@ -10,7 +10,6 @@ from starlette.responses import Response
 from app.core.metrics import (
     http_requests_total,
     http_request_duration_seconds,
-    db_connections,
 )
 
 
@@ -39,8 +38,14 @@ class MetricsMiddleware(BaseHTTPMiddleware):
             duration = time.time() - start_time
 
             # Record metrics
-            http_requests_total.labels(method=request.method, endpoint=request.url.path, status=status_code).inc()
+            http_requests_total.labels(
+                method=request.method,
+                endpoint=request.url.path,
+                status=status_code,
+            ).inc()
 
-            http_request_duration_seconds.labels(method=request.method, endpoint=request.url.path).observe(duration)
+            http_request_duration_seconds.labels(
+                method=request.method, endpoint=request.url.path
+            ).observe(duration)
 
         return response

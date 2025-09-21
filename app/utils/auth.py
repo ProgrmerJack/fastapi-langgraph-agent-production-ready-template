@@ -19,7 +19,9 @@ from app.schemas.auth import Token
 from app.utils.sanitization import sanitize_string
 
 
-def create_access_token(thread_id: str, expires_delta: Optional[timedelta] = None) -> Token:
+def create_access_token(
+    thread_id: str, expires_delta: Optional[timedelta] = None
+) -> Token:
     """Create a new access token for a thread.
 
     Args:
@@ -32,16 +34,22 @@ def create_access_token(thread_id: str, expires_delta: Optional[timedelta] = Non
     if expires_delta:
         expire = datetime.now(UTC) + expires_delta
     else:
-        expire = datetime.now(UTC) + timedelta(days=settings.JWT_ACCESS_TOKEN_EXPIRE_DAYS)
+        expire = datetime.now(UTC) + timedelta(
+            days=settings.JWT_ACCESS_TOKEN_EXPIRE_DAYS
+        )
 
     to_encode = {
         "sub": thread_id,
         "exp": expire,
         "iat": datetime.now(UTC),
-        "jti": sanitize_string(f"{thread_id}-{datetime.now(UTC).timestamp()}"),  # Add unique token identifier
+        "jti": sanitize_string(
+            f"{thread_id}-{datetime.now(UTC).timestamp()}"
+        ),  # Add unique token identifier
     }
 
-    encoded_jwt = jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+    encoded_jwt = jwt.encode(
+        to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM
+    )
 
     logger.info("token_created", thread_id=thread_id, expires_at=expire.isoformat())
 
@@ -71,7 +79,9 @@ def verify_token(token: str) -> Optional[str]:
         raise ValueError("Token format is invalid - expected JWT format")
 
     try:
-        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+        payload = jwt.decode(
+            token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM]
+        )
         thread_id: str = payload.get("sub")
         if thread_id is None:
             logger.warning("token_missing_thread_id")

@@ -5,7 +5,6 @@ for the application. It includes environment detection, .env file loading, and
 configuration value parsing.
 """
 
-import json
 import os
 from enum import Enum
 from pathlib import Path
@@ -89,7 +88,7 @@ def parse_list_from_env(env_key, default=None):
         return default or []
 
     # Remove quotes if they exist
-    value = value.strip("\"'")
+    value = value.strip("'"")
     # Handle single value case
     if "," not in value:
         return [value]
@@ -108,7 +107,7 @@ def parse_dict_of_lists_from_env(prefix, default_dict=None):
             endpoint = key[len(prefix) :].lower()  # Extract endpoint name
             # Parse the values for this endpoint
             if value:
-                value = value.strip("\"'")
+                value = value.strip("'"")
                 if "," in value:
                     result[endpoint] = [item.strip() for item in value.split(",") if item.strip()]
                 else:
@@ -134,7 +133,8 @@ class Settings:
         self.PROJECT_NAME = os.getenv("PROJECT_NAME", "FastAPI LangGraph Template")
         self.VERSION = os.getenv("VERSION", "1.0.0")
         self.DESCRIPTION = os.getenv(
-            "DESCRIPTION", "A production-ready FastAPI template with LangGraph and Langfuse integration"
+            "DESCRIPTION",
+            "A production-ready FastAPI template with LangGraph and Langfuse integration",
         )
         self.API_V1_STR = os.getenv("API_V1_STR", "/api/v1")
         self.DEBUG = os.getenv("DEBUG", "false").lower() in ("true", "1", "t", "yes")
@@ -149,7 +149,7 @@ class Settings:
 
         # LangGraph Configuration
         self.LLM_API_KEY = os.getenv("LLM_API_KEY", "")
-        self.LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
+        self.LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o")
         self.DEFAULT_LLM_TEMPERATURE = float(os.getenv("DEFAULT_LLM_TEMPERATURE", "0.2"))
         self.MAX_TOKENS = int(os.getenv("MAX_TOKENS", "2000"))
         self.MAX_LLM_CALL_RETRIES = int(os.getenv("MAX_LLM_CALL_RETRIES", "3"))
@@ -171,7 +171,9 @@ class Settings:
         self.CHECKPOINT_TABLES = ["checkpoint_blobs", "checkpoint_writes", "checkpoints"]
 
         # Rate Limiting Configuration
-        self.RATE_LIMIT_DEFAULT = parse_list_from_env("RATE_LIMIT_DEFAULT", ["200 per day", "50 per hour"])
+        self.RATE_LIMIT_DEFAULT = parse_list_from_env(
+            "RATE_LIMIT_DEFAULT", ["200 per day", "50 per hour"]
+        )
 
         # Rate limit endpoints defaults
         default_endpoints = {
@@ -193,7 +195,7 @@ class Settings:
                 self.RATE_LIMIT_ENDPOINTS[endpoint] = value
 
         # Evaluation Configuration
-        self.EVALUATION_LLM = os.getenv("EVALUATION_LLM", "gpt-4o-mini")
+        self.EVALUATION_LLM = os.getenv("EVALUATION_LLM", "gpt-4o")
         self.EVALUATION_BASE_URL = os.getenv("EVALUATION_BASE_URL", "https://api.openai.com/v1")
         self.EVALUATION_API_KEY = os.getenv("EVALUATION_API_KEY", self.LLM_API_KEY)
         self.EVALUATION_SLEEP_TIME = int(os.getenv("EVALUATION_SLEEP_TIME", "10"))

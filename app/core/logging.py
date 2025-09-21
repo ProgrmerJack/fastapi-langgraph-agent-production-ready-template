@@ -12,7 +12,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import (
     Any,
-    Dict,
     List,
 )
 
@@ -34,7 +33,9 @@ def get_log_file_path() -> Path:
         Path: The path to the log file
     """
     env_prefix = settings.ENVIRONMENT.value
-    return settings.LOG_DIR / f"{env_prefix}-{datetime.now().strftime('%Y-%m-%d')}.jsonl"
+    return (
+        settings.LOG_DIR / f"{env_prefix}-{datetime.now().strftime('%Y-%m-%d')}.jsonl"
+    )
 
 
 class JsonlFileHandler(logging.Handler):
@@ -111,7 +112,12 @@ def get_structlog_processors(include_file_info: bool = True) -> List[Any]:
         )
 
     # Add environment info
-    processors.append(lambda _, __, event_dict: {**event_dict, "environment": settings.ENVIRONMENT.value})
+    processors.append(
+        lambda _, __, event_dict: {
+            **event_dict,
+            "environment": settings.ENVIRONMENT.value,
+        }
+    )
 
     return processors
 
@@ -133,7 +139,8 @@ def setup_logging() -> None:
     # Get shared processors
     shared_processors = get_structlog_processors(
         # Include detailed file info only in development and test
-        include_file_info=settings.ENVIRONMENT in [Environment.DEVELOPMENT, Environment.TEST]
+        include_file_info=settings.ENVIRONMENT
+        in [Environment.DEVELOPMENT, Environment.TEST]
     )
 
     # Configure standard logging

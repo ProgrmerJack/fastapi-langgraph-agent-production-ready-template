@@ -19,7 +19,9 @@ def dump_messages(messages: list[Message]) -> list[dict]:
     return [message.model_dump() for message in messages]
 
 
-def prepare_messages(messages: list[Message], llm: BaseChatModel, system_prompt: str) -> list[Message]:
+def prepare_messages(
+    messages: list[Message], llm: BaseChatModel, system_prompt: str
+) -> list[Message]:
     """Prepare the messages for the LLM.
 
     Args:

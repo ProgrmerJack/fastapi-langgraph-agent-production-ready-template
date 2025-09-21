@@ -9,7 +9,6 @@ from typing import (
     List,
     Optional,
     Tuple,
-    Union,
 )
 
 from langfuse.api.resources.commons.types.trace_with_details import TraceWithDetails
@@ -31,7 +30,9 @@ def format_messages(messages: list[dict]) -> str:
     for idx, message in enumerate(messages):
         if message["type"] == "tool":
             formatted_messages.append(
-                f"tool {message.get('name')} input: {messages[idx - 1].get('additional_kwargs', {}).get('tool_calls', [])[0].get('function', {}).get('arguments')} {message.get('content')[:100]}..."
+                f"tool {message.get('name')} input: "
+                f"{messages[idx - 1].get('additional_kwargs', {}).get('tool_calls', [])[0].get('function', {}).get('arguments')} "
+                f"{message.get('content')[:100]}..."
                 if len(message.get("content", "")) > 100
                 else f"tool {message.get('name')}: {message.get('content')}"
             )
@@ -78,7 +79,9 @@ def initialize_report(model_name: str) -> Dict[str, Any]:
     }
 
 
-def initialize_metrics_summary(report: Dict[str, Any], metrics: List[Dict[str, str]]) -> None:
+def initialize_metrics_summary(
+    report: Dict[str, Any], metrics: List[Dict[str, str]]
+) -> None:
     """Initialize metrics summary in the report.
 
     Args:
@@ -86,11 +89,19 @@ def initialize_metrics_summary(report: Dict[str, Any], metrics: List[Dict[str, s
         metrics: List of metric definitions.
     """
     for metric in metrics:
-        report["metrics_summary"][metric["name"]] = {"success_count": 0, "failure_count": 0, "avg_score": 0.0}
+        report["metrics_summary"][metric["name"]] = {
+            "success_count": 0,
+            "failure_count": 0,
+            "avg_score": 0.0,
+        }
 
 
 def update_success_metrics(
-    report: Dict[str, Any], trace_id: str, metric_name: str, score: ScoreSchema, trace_results: Dict[str, Any]
+    report: Dict[str, Any],
+    trace_id: str,
+    metric_name: str,
+    score: ScoreSchema,
+    trace_results: Dict[str, Any],
 ) -> None:
     """Update metrics for a successful evaluation.
 
@@ -112,7 +123,10 @@ def update_success_metrics(
 
 
 def update_failure_metrics(
-    report: Dict[str, Any], trace_id: str, metric_name: str, trace_results: Dict[str, Any]
+    report: Dict[str, Any],
+    trace_id: str,
+    metric_name: str,
+    trace_results: Dict[str, Any],
 ) -> None:
     """Update metrics for a failed evaluation.
 
@@ -127,7 +141,10 @@ def update_failure_metrics(
 
 
 def process_trace_results(
-    report: Dict[str, Any], trace_id: str, trace_results: Dict[str, Any], metrics_count: int
+    report: Dict[str, Any],
+    trace_id: str,
+    trace_results: Dict[str, Any],
+    metrics_count: int,
 ) -> None:
     """Process results for a single trace.
 
@@ -141,7 +158,10 @@ def process_trace_results(
         trace_results[trace_id]["success"] = True
         report["successful_traces"] += 1
         report["successful_traces_details"].append(
-            {"trace_id": trace_id, "metrics_results": trace_results[trace_id]["metrics_results"]}
+            {
+                "trace_id": trace_id,
+                "metrics_results": trace_results[trace_id]["metrics_results"],
+            }
         )
     else:
         report["failed_traces"] += 1

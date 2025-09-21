@@ -5,7 +5,6 @@ streaming chat, message history management, and chat history clearing.
 """
 
 import json
-from typing import List
 
 from fastapi import (
     APIRouter,
@@ -24,13 +23,11 @@ from app.models.session import Session
 from app.schemas.chat import (
     ChatRequest,
     ChatResponse,
-    Message,
     StreamResponse,
 )
 
 router = APIRouter()
 agent = LangGraphAgent()
-
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -60,8 +57,6 @@ async def chat(
             message_count=len(chat_request.messages),
         )
 
-       
-
         result = await agent.get_response(
             chat_request.messages, session.id, user_id=session.user_id
         )
@@ -70,7 +65,9 @@ async def chat(
 
         return ChatResponse(messages=result)
     except Exception as e:
-        logger.error("chat_request_failed", session_id=session.id, error=str(e), exc_info=True)
+        logger.error(
+            "chat_request_failed", session_id=session.id, error=str(e), exc_info=True
+        )
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -112,10 +109,12 @@ async def chat_stream(
             """
             try:
                 full_response = ""
-                with llm_stream_duration_seconds.labels(model=agent.llm.model_name).time():
+                with llm_stream_duration_seconds.labels(
+                    model=agent.llm.model_name
+                ).time():
                     async for chunk in agent.get_stream_response(
                         chat_request.messages, session.id, user_id=session.user_id
-                     ):
+                    ):
                         full_response += chunk
                         response = StreamResponse(content=chunk, done=False)
                         yield f"data: {json.dumps(response.model_dump())}\n\n"
@@ -168,7 +167,9 @@ async def get_session_messages(
         messages = await agent.get_chat_history(session.id)
         return ChatResponse(messages=messages)
     except Exception as e:
-        logger.error("get_messages_failed", session_id=session.id, error=str(e), exc_info=True)
+        logger.error(
+            "get_messages_failed", session_id=session.id, error=str(e), exc_info=True
+        )
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -191,5 +192,10 @@ async def clear_chat_history(
         await agent.clear_chat_history(session.id)
         return {"message": "Chat history cleared successfully"}
     except Exception as e:
-        logger.error("clear_chat_history_failed", session_id=session.id, error=str(e), exc_info=True)
+        logger.error(
+            "clear_chat_history_failed",
+            session_id=session.id,
+            error=str(e),
+            exc_info=True,
+        )
         raise HTTPException(status_code=500, detail=str(e))

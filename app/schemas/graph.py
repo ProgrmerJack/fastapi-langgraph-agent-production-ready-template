@@ -18,7 +18,9 @@ class GraphState(BaseModel):
     messages: Annotated[list, add_messages] = Field(
         default_factory=list, description="The messages in the conversation"
     )
-    session_id: str = Field(..., description="The unique identifier for the conversation session")
+    session_id: str = Field(
+        ..., description="The unique identifier for the conversation session"
+    )
 
     @field_validator("session_id")
     @classmethod
@@ -41,5 +43,7 @@ class GraphState(BaseModel):
         except ValueError:
             # If not a UUID, check for safe characters only
             if not re.match(r"^[a-zA-Z0-9_\-]+$", v):
-                raise ValueError("Session ID must contain only alphanumeric characters, underscores, and hyphens")
+                raise ValueError(
+                    "Session ID must contain only alphanumeric characters, underscores, and hyphens"
+                )
             return v

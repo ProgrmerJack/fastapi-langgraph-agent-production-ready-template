@@ -69,7 +69,7 @@ async def get_current_user(
             logger.error("invalid_token", token_part=token[:10] + "...")
             raise HTTPException(
                 status_code=401,
-                detail="Invalid authentication credentials",
+                detail=("Invalid authentication credentials"),
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
@@ -80,7 +80,7 @@ async def get_current_user(
             logger.error("user_not_found", user_id=user_id_int)
             raise HTTPException(
                 status_code=404,
-                detail="User not found",
+                detail=("User not found"),
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
@@ -117,7 +117,7 @@ async def get_current_session(
             logger.error("session_id_not_found", token_part=token[:10] + "...")
             raise HTTPException(
                 status_code=401,
-                detail="Invalid authentication credentials",
+                detail=("Invalid authentication credentials"),
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
@@ -130,7 +130,7 @@ async def get_current_session(
             logger.error("session_not_found", session_id=session_id)
             raise HTTPException(
                 status_code=404,
-                detail="Session not found",
+                detail=("Session not found"),
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
@@ -183,7 +183,10 @@ async def register_user(request: Request, user_data: UserCreate):
 @router.post("/login", response_model=TokenResponse)
 @limiter.limit(settings.RATE_LIMIT_ENDPOINTS["login"][0])
 async def login(
-    request: Request, username: str = Form(...), password: str = Form(...), grant_type: str = Form(default="password")
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+    grant_type: str = Form(default="password"),
 ):
     """Login a user.
 
@@ -209,7 +212,7 @@ async def login(
         if grant_type != "password":
             raise HTTPException(
                 status_code=400,
-                detail="Unsupported grant type. Must be 'password'",
+                detail=("Unsupported grant type. Must be 'password'"),
             )
 
         user = await db_service.get_user_by_email(username)
@@ -221,7 +224,11 @@ async def login(
             )
 
         token = create_access_token(str(user.id))
-        return TokenResponse(access_token=token.access_token, token_type="bearer", expires_at=token.expires_at)
+        return TokenResponse(
+            access_token=token.access_token,
+            token_type="bearer",
+            expires_at=token.expires_at,
+        )
     except ValueError as ve:
         logger.error("login_validation_failed", error=str(ve), exc_info=True)
         raise HTTPException(status_code=422, detail=str(ve))
@@ -257,13 +264,20 @@ async def create_session(user: User = Depends(get_current_user)):
 
         return SessionResponse(session_id=session_id, name=session.name, token=token)
     except ValueError as ve:
-        logger.error("session_creation_validation_failed", error=str(ve), user_id=user.id, exc_info=True)
+        logger.error(
+            "session_creation_validation_failed",
+            error=str(ve),
+            user_id=user.id,
+            exc_info=True,
+        )
         raise HTTPException(status_code=422, detail=str(ve))
 
 
 @router.patch("/session/{session_id}/name", response_model=SessionResponse)
 async def update_session_name(
-    session_id: str, name: str = Form(...), current_session: Session = Depends(get_current_session)
+    session_id: str,
+    name: str = Form(...),
+    current_session: Session = Depends(get_current_session),
 ):
     """Update a session's name.
 
@@ -293,7 +307,12 @@ async def update_session_name(
 
         return SessionResponse(session_id=sanitized_session_id, name=session.name, token=token)
     except ValueError as ve:
-        logger.error("session_update_validation_failed", error=str(ve), session_id=session_id, exc_info=True)
+        logger.error(
+            "session_update_validation_failed",
+            error=str(ve),
+            session_id=session_id,
+            exc_info=True,
+        )
         raise HTTPException(status_code=422, detail=str(ve))
 
 
@@ -322,7 +341,12 @@ async def delete_session(session_id: str, current_session: Session = Depends(get
 
         logger.info("session_deleted", session_id=session_id, user_id=current_session.user_id)
     except ValueError as ve:
-        logger.error("session_deletion_validation_failed", error=str(ve), session_id=session_id, exc_info=True)
+        logger.error(
+            "session_deletion_validation_failed",
+            error=str(ve),
+            session_id=session_id,
+            exc_info=True,
+        )
         raise HTTPException(status_code=422, detail=str(ve))
 
 
@@ -347,5 +371,10 @@ async def get_user_sessions(user: User = Depends(get_current_user)):
             for session in sessions
         ]
     except ValueError as ve:
-        logger.error("get_sessions_validation_failed", user_id=user.id, error=str(ve), exc_info=True)
+        logger.error(
+            "get_sessions_validation_failed",
+            user_id=user.id,
+            error=str(ve),
+            exc_info=True,
+        )
         raise HTTPException(status_code=422, detail=str(ve))

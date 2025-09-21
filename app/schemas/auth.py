@@ -49,7 +49,9 @@ class UserCreate(BaseModel):
     """
 
     email: EmailStr = Field(..., description="User's email address")
-    password: SecretStr = Field(..., description="User's password", min_length=8, max_length=64)
+    password: SecretStr = Field(
+        ..., description="User's password", min_length=8, max_length=64
+    )
 
     @field_validator("password")
     @classmethod
@@ -109,7 +111,9 @@ class SessionResponse(BaseModel):
         token: The authentication token for the session
     """
 
-    session_id: str = Field(..., description="The unique identifier for the chat session")
+    session_id: str = Field(
+        ..., description="The unique identifier for the chat session"
+    )
     name: str = Field(default="", description="Name of the session", max_length=100)
     token: Token = Field(..., description="The authentication token for the session")
 

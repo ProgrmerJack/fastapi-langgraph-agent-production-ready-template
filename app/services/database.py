@@ -59,7 +59,11 @@ class DatabaseService:
                 max_overflow=max_overflow,
             )
         except SQLAlchemyError as e:
-            logger.error("database_initialization_error", error=str(e), environment=settings.ENVIRONMENT.value)
+            logger.error(
+                "database_initialization_error",
+                error=str(e),
+                environment=settings.ENVIRONMENT.value,
+            )
             # In production, don't raise - allow app to start even with DB issues
             if settings.ENVIRONMENT != Environment.PRODUCTION:
                 raise
@@ -128,7 +132,9 @@ class DatabaseService:
             logger.info("user_deleted", email=email)
             return True
 
-    async def create_session(self, session_id: str, user_id: int, name: str = "") -> ChatSession:
+    async def create_session(
+        self, session_id: str, user_id: int, name: str = ""
+    ) -> ChatSession:
         """Create a new chat session.
 
         Args:
@@ -144,7 +150,9 @@ class DatabaseService:
             session.add(chat_session)
             session.commit()
             session.refresh(chat_session)
-            logger.info("session_created", session_id=session_id, user_id=user_id, name=name)
+            logger.info(
+                "session_created", session_id=session_id, user_id=user_id, name=name
+            )
             return chat_session
 
     async def delete_session(self, session_id: str) -> bool:
@@ -189,7 +197,11 @@ class DatabaseService:
             List[ChatSession]: List of user's sessions
         """
         with Session(self.engine) as session:
-            statement = select(ChatSession).where(ChatSession.user_id == user_id).order_by(ChatSession.created_at)
+            statement = (
+                select(ChatSession)
+                .where(ChatSession.user_id == user_id)
+                .order_by(ChatSession.created_at)
+            )
             sessions = session.exec(statement).all()
             return sessions
 
