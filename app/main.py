@@ -122,45 +122,68 @@ app.include_router(api_router, prefix=settings.API_V1_STR)
 @app.get("/")
 @limiter.limit(settings.RATE_LIMIT_ENDPOINTS["root"][0])
 async def root(request: Request):
-    """Root endpoint returning basic API information."""
+    """Root endpoint returning basic API information with health snapshot."""
     logger.info("root_endpoint_called")
+    payload, _ = await _compute_health_payload()
     return {
-        "name": settings.PROJECT_NAME,
-        "version": settings.VERSION,
-        "status": "healthy",
-        "environment": settings.ENVIRONMENT.value,
-        "swagger_url": "/docs",
-        "redoc_url": "/redoc",
-    }
-
-
-@app.get("/health")
-@limiter.limit(settings.RATE_LIMIT_ENDPOINTS["health"][0])
-async def health_check(request: Request) -> Dict[str, Any]:
-    """Health check endpoint with environment-specific information.
-
-    Returns:
-        Dict[str, Any]: Health status information
-    """
-    logger.info("health_check_called")
-
-    # Check database connectivity
-    db_healthy = await database_service.health_check()
-
-    response = {
-        "status": "healthy" if db_healthy else "degraded",
-        "version": settings.VERSION,
-        "environment": settings.ENVIRONMENT.value,
-        "components": {
-            "api": "healthy",
-            "database": "healthy" if db_healthy else "unhealthy",
+        **payload,
+        "service": settings.PROJECT_NAME,
+        "message": "Agent backend online. Use /ready for readiness and /docs for API schema.",
+        "endpoints": {
+            "health": "/health",
+            "ready": "/ready",
+            "api_v1": settings.API_V1_STR,
+            "docs": "/docs",
+            "redoc": "/redoc",
         },
-        "timestamp": datetime.now().isoformat(),
     }
 
-    # If DB is unhealthy, set the appropriate status code
+
+
+
+async def _compute_health_payload() -> tuple[Dict[str, Any], int]:
+    """Aggregate service health checks into a unified payload."""
+    try:
+        db_healthy = await database_service.health_check()
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.exception("database_health_check_failed", error=str(exc))
+        db_healthy = False
+        reason = "Database health check raised an exception"
+    else:
+        reason = None if db_healthy else "Database connectivity check failed"
+        if not db_healthy:
+            logger.warning("database_health_check_degraded")
+
+    payload: Dict[str, Any] = {
+        "status": "ok" if db_healthy else "degraded",
+        "ready": bool(db_healthy),
+        "reason": reason,
+        "version": settings.VERSION,
+        "environment": settings.ENVIRONMENT.value,
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "components": {
+            "api": "ok",
+            "database": "ok" if db_healthy else "unavailable",
+        },
+    }
     status_code = (
         status.HTTP_200_OK if db_healthy else status.HTTP_503_SERVICE_UNAVAILABLE
     )
+    return payload, status_code
 
-    return JSONResponse(content=response, status_code=status_code)
+@app.get("/health")
+@limiter.limit(settings.RATE_LIMIT_ENDPOINTS["health"][0])
+async def health_check(request: Request) -> JSONResponse:
+    """Health check endpoint with environment-specific information."""
+    logger.info("health_check_called")
+    payload, status_code = await _compute_health_payload()
+    return JSONResponse(content=payload, status_code=status_code)
+
+
+@app.get("/ready")
+@limiter.limit(settings.RATE_LIMIT_ENDPOINTS["ready"][0])
+async def readiness_check(request: Request) -> JSONResponse:
+    """Readiness endpoint aligned with orchestrator expectations."""
+    logger.info("ready_check_called")
+    payload, status_code = await _compute_health_payload()
+    return JSONResponse(content=payload, status_code=status_code)

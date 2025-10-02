@@ -88,7 +88,7 @@ def parse_list_from_env(env_key, default=None):
         return default or []
 
     # Remove quotes if they exist
-    value = value.strip("'"")
+    value = value.strip("'\"")
     # Handle single value case
     if "," not in value:
         return [value]
@@ -107,7 +107,7 @@ def parse_dict_of_lists_from_env(prefix, default_dict=None):
             endpoint = key[len(prefix) :].lower()  # Extract endpoint name
             # Parse the values for this endpoint
             if value:
-                value = value.strip("'"")
+                value = value.strip("'\"")
                 if "," in value:
                     result[endpoint] = [item.strip() for item in value.split(",") if item.strip()]
                 else:
@@ -184,6 +184,7 @@ class Settings:
             "login": ["20 per minute"],
             "root": ["10 per minute"],
             "health": ["20 per minute"],
+            "ready": ["20 per minute"],
         }
 
         # Update rate limit endpoints from environment variables
