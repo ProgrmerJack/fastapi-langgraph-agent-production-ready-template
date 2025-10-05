@@ -17,11 +17,11 @@ from fastapi import (
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from langfuse import Langfuse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from app.api.v1.api import api_router
+from app.api.v1.events import router as events_router
 from app.core.config import settings
 from app.core.limiter import limiter
 from app.core.logging import logger
@@ -32,12 +32,17 @@ from app.services.database import database_service
 # Load environment variables
 load_dotenv()
 
-# Initialize Langfuse
-langfuse = Langfuse(
-    public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
-    secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
-    host=os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com"),
-)
+# Initialize Langfuse (optional - gracefully degrade if not available)
+langfuse = None
+try:
+    from langfuse import Langfuse
+    langfuse = Langfuse(
+        public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
+        secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
+        host=os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com"),
+    )
+except ImportError:
+    logger.warning("langfuse not installed - LLM tracing disabled")
 
 
 @asynccontextmanager
@@ -115,8 +120,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include API router
+# Include API routers
 app.include_router(api_router, prefix=settings.API_V1_STR)
+# Events router at root level for bot telemetry
+app.include_router(events_router, tags=["events"])
+# Market router at root level for dashboard
+from app.api.v1.market import router as market_router
+app.include_router(market_router, tags=["market"])
 
 
 @app.get("/")
