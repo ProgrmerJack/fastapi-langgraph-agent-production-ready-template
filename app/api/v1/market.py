@@ -53,6 +53,28 @@ def _normalize_symbol(symbol: str) -> str:
     return symbol.replace("-", "").replace("/", "").replace("_", "").upper()
 
 
+
+_INTERVAL_MS: Dict[str, int] = {
+    "1m": 60_000,
+    "3m": 180_000,
+    "5m": 300_000,
+    "15m": 900_000,
+    "30m": 1_800_000,
+    "1h": 3_600_000,
+    "2h": 7_200_000,
+    "4h": 14_400_000,
+    "6h": 21_600_000,
+    "8h": 28_800_000,
+    "12h": 43_200_000,
+    "1d": 86_400_000,
+}
+
+
+def _interval_to_ms(label: str) -> int:
+    """Return the approximate interval length in milliseconds."""
+    return _INTERVAL_MS.get(str(label).lower(), 60_000)
+
+
 async def get_candle_storage() -> CandleStorageService:
     """Get or initialize the candle storage service."""
     global _db_manager, _candle_storage
@@ -67,52 +89,43 @@ async def get_candle_storage() -> CandleStorageService:
     return _candle_storage
 
 
+
 @router.get("/market/candles", response_model=None)
 async def get_candles(
     response: Response,
     symbol: str = Query("BTC-USDT", description="Trading pair symbol"),
     tf: str = Query("1m", description="Timeframe (1m, 5m, 15m, 1h, etc.)"),
-    limit: int = Query(500, ge=1, le=10000, description="Number of candles to return"),
+    limit: Optional[int] = Query(
+        500,
+        ge=0,
+        le=50000,
+        description="Number of candles to return (0 = all available)",
+    ),
     start_time: Optional[int] = Query(None, description="Start timestamp (ms) for historical data"),
     end_time: Optional[int] = Query(None, description="End timestamp (ms) for historical data"),
     if_none_match: Optional[str] = Header(None),
     storage: CandleStorageService = Depends(get_candle_storage),
 ):
-    """
-    Get historical candle (OHLCV) data with infinite storage.
-    
-    This endpoint now uses database storage for unlimited history.
-    First checks database, then fetches from Binance if needed.
-    All fetched candles are automatically stored for future queries.
-    
-    Args:
-        symbol: Trading pair (e.g., BTC-USDT, ETH-USDT)
-        tf: Timeframe/interval (1m, 5m, 15m, 1h, 4h, 1d)
-        limit: Number of candles (1-1000)
-        start_time: Optional start timestamp for historical queries
-        end_time: Optional end timestamp for historical queries
-        storage: Database storage service (auto-injected)
-    
-    Returns:
-        CandleResponse with candle data
-    """
-    # Always try database first for historical data (provides full depth!)
+    """Return historical candles from storage or Binance with smart pagination."""
+
+    if limit in (None, 0):
+        limit_value: Optional[int] = None
+    else:
+        limit_value = max(1, int(limit))
+
     try:
-        # Convert timestamps if provided
         start_dt = datetime.fromtimestamp(start_time / 1000, tz=timezone.utc) if start_time else None
         end_dt = datetime.fromtimestamp(end_time / 1000, tz=timezone.utc) if end_time else None
-        
+
         db_candles = await storage.get_candles(
             symbol=symbol,
             timeframe=tf,
             start_time=start_dt,
             end_time=end_dt,
-            limit=limit
+            limit=limit_value,
         )
-        
+
         if db_candles:
-            # Convert database format to API format
-            # Database returns DESC order (newest first), reverse for chart display
             candles = [
                 {
                     "t": int(c["timestamp"].timestamp() * 1000),
@@ -122,50 +135,62 @@ async def get_candles(
                     "c": c["close"],
                     "v": c["volume"],
                 }
-                for c in reversed(db_candles)  # Reverse to oldest->newest for charts
+                for c in reversed(db_candles)
             ]
-            
-            logger.info(f"Served {len(candles)} candles from database", extra={"symbol": symbol, "tf": tf, "limit": limit})
+
+            logger.info(
+                "Served %s candles from database", len(candles),
+                extra={
+                    "symbol": symbol,
+                    "tf": tf,
+                    "limit": limit_value if limit_value is not None else "all",
+                    "start": start_time,
+                    "end": end_time,
+                },
+            )
             return CandleResponse(
                 candles=candles,
                 source="database",
                 symbol=symbol,
                 count=len(candles),
             )
-    except Exception as e:
-        logger.warning(f"Database query failed, falling back to Binance: {e}")
-    
-    cache_key = f"{symbol}:{tf}:{limit}"
+    except Exception as exc:
+        logger.warning(f"Database query failed, falling back to Binance: {exc}")
+
+    cache_limit = "all" if limit_value is None else str(limit_value)
+    cache_start = str(start_time) if start_time is not None else "_"
+    cache_end = str(end_time) if end_time is not None else "_"
+    cache_key = f"{symbol}:{tf}:{cache_limit}:{cache_start}:{cache_end}"
     now = datetime.now(timezone.utc).timestamp()
-    
-    # Helper function to calculate ETag
+
     def calculate_etag(candle_data: List[Dict[str, Any]]) -> str:
-        """Calculate ETag hash from candle data."""
         data_str = json.dumps(candle_data, sort_keys=True)
         return hashlib.md5(data_str.encode()).hexdigest()
-    
-    # Helper function to update metrics
-    def update_cache_metrics():
-        """Update Prometheus cache hit ratio."""
+
+    def update_cache_metrics() -> None:
         total_hits = _etag_cache_hits._value._value
         total_misses = _etag_cache_misses._value._value
         total = total_hits + total_misses
         if total > 0:
             _etag_cache_hit_ratio.set(total_hits / total)
-    
-    # Check cache
-    if cache_key in _candle_cache:
+
+    allow_cache = (
+        limit_value is not None
+        and limit_value <= 10000
+        and start_time is None
+        and end_time is None
+    )
+
+    if allow_cache and cache_key in _candle_cache:
         cached_data, cached_time, cached_etag = _candle_cache[cache_key]
         if now - cached_time < _CACHE_TTL:
-            # Check if client has current version (ETag match)
             if if_none_match and if_none_match == cached_etag:
-                logger.debug(f"ETag match for {cache_key} - returning 304")
+                logger.debug("ETag match for %s - returning 304", cache_key)
                 _etag_cache_hits.inc()
                 update_cache_metrics()
-                return Response(status_code=304)  # Not Modified
-            
-            # Cache hit but ETag mismatch or no ETag provided
-            logger.debug(f"Serving candles from cache: {cache_key}")
+                return Response(status_code=304)
+
+            logger.debug("Serving candles from cache: %s", cache_key)
             _etag_cache_misses.inc()
             update_cache_metrics()
             response.headers["ETag"] = cached_etag
@@ -176,134 +201,149 @@ async def get_candles(
                 symbol=symbol,
                 count=len(cached_data),
             )
-    
-    # Fetch from Binance
+
     binance_symbol = _normalize_symbol(symbol)
     binance_base = _get_binance_base_url()
-    
-    # Try uiKlines first (better for charts), fall back to klines
-    endpoints = ["uiKlines", "klines"]
-    candles: List[Dict[str, Any]] = []
-    
-    for endpoint in endpoints:
-        url = f"{binance_base}/api/v3/{endpoint}"
-        params = {
-            "symbol": binance_symbol,
-            "interval": tf,
-            "limit": limit,
-        }
-        
+    step_ms = max(1, _interval_to_ms(tf))
+    iterations = 0
+    max_iterations = 24
+    next_end = end_time
+    include_start = start_time
+    remaining = limit_value
+    fetched_candles: List[Dict[str, Any]] = []
+
+    while iterations < max_iterations:
+        batch_limit = remaining if remaining is not None else 1000
+        batch_limit = max(1, min(1000, batch_limit))
+        fetched_batch = None
+
+        for endpoint in ("uiKlines", "klines"):
+            url = f"{binance_base}/api/v3/{endpoint}"
+            params: Dict[str, Any] = {
+                "symbol": binance_symbol,
+                "interval": tf,
+                "limit": batch_limit,
+            }
+            if include_start is not None and iterations == 0:
+                params["startTime"] = include_start
+            if next_end is not None:
+                params["endTime"] = next_end
+
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    response = await client.get(url, params=params)
+                    response.raise_for_status()
+                    raw_candles = response.json()
+            except Exception:
+                continue
+
+            if not isinstance(raw_candles, list) or not raw_candles:
+                continue
+
+            fetched_batch = raw_candles
+            break
+
+        if fetched_batch is None:
+            break
+
+        for kline in fetched_batch:
+            try:
+                open_price = float(kline[1])
+                high = float(kline[2])
+                low = float(kline[3])
+                close = float(kline[4])
+                volume = float(kline[5])
+                open_time_ms = int(float(kline[0]))
+                close_time_ms = int(float(kline[6])) if len(kline) > 6 else open_time_ms
+                quote_volume = float(kline[7]) if len(kline) > 7 else 0.0
+                trade_count = int(float(kline[8])) if len(kline) > 8 else 0
+            except (ValueError, TypeError, IndexError):
+                continue
+
+            fetched_candles.append(
+                {
+                    "t": open_time_ms,
+                    "o": open_price,
+                    "h": high,
+                    "l": low,
+                    "c": close,
+                    "v": volume,
+                    "close_time": close_time_ms,
+                    "quote_volume": quote_volume,
+                    "trades": trade_count,
+                }
+            )
+
+        if remaining is not None:
+            remaining -= len(fetched_batch)
+            if remaining <= 0:
+                break
+
+        earliest_open = int(float(fetched_batch[0][0]))
+        next_end = earliest_open - step_ms
+        if next_end <= 0:
+            break
+
+        if len(fetched_batch) < batch_limit:
+            break
+
+        include_start = None
+        iterations += 1
+
+    if fetched_candles:
+        dedup: Dict[int, Dict[str, Any]] = {}
+        for candle in fetched_candles:
+            dedup[candle["t"]] = candle
+        ordered_times = sorted(dedup)
+        candles = [dedup[t] for t in ordered_times]
+
+        etag = calculate_etag(candles)
+        if allow_cache:
+            _candle_cache[cache_key] = (candles, now, etag)
+
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(url, params=params)
-                response.raise_for_status()
-                
-                raw_candles = response.json()
-                
-                # Convert Binance kline format to chart-friendly OHLCV dict
-                for kline in raw_candles:
-                    try:
-                        open_price = float(kline[1])
-                        high = float(kline[2])
-                        low = float(kline[3])
-                        close = float(kline[4])
-                        volume = float(kline[5])
-                    except (ValueError, TypeError, IndexError):
-                        continue
+            candles_to_store = [
+                {
+                    "timestamp": datetime.fromtimestamp(c["t"] / 1000, tz=timezone.utc),
+                    "symbol": symbol,
+                    "timeframe": tf,
+                    "open": c["o"],
+                    "high": c["h"],
+                    "low": c["l"],
+                    "close": c["c"],
+                    "volume": c["v"],
+                }
+                for c in candles
+            ]
+            stored_count = await storage.store_candles_bulk(candles_to_store)
+            logger.debug("Stored %s new candles in database", stored_count)
+        except Exception as store_exc:
+            logger.warning(f"Failed to store candles in database: {store_exc}")
 
-                    timestamp_ms = int(kline[0])
-                    close_time_ms = int(kline[6]) if len(kline) > 6 else timestamp_ms
-                    quote_volume = float(kline[7]) if len(kline) > 7 else 0.0
-                    trade_count = int(kline[8]) if len(kline) > 8 else 0
+        _etag_cache_misses.inc()
+        update_cache_metrics()
+        if allow_cache:
+            response.headers["ETag"] = etag
+            response.headers["Cache-Control"] = "max-age=60"
 
-                    candles.append(
-                        {
-                            "t": timestamp_ms,
-                            "o": open_price,
-                            "h": high,
-                            "l": low,
-                            "c": close,
-                            "v": volume,
-                            "close_time": close_time_ms,
-                            "quote_volume": quote_volume,
-                            "trades": trade_count,
-                        }
-                    )
-                
-                # Success! Calculate ETag, cache and return
-                etag = calculate_etag(candles)
-                _candle_cache[cache_key] = (candles, now, etag)
-                
-                # Store in database for infinite history
-                try:
-                    candles_to_store = [
-                        {
-                            "timestamp": datetime.fromtimestamp(c["t"] / 1000, tz=timezone.utc),
-                            "symbol": symbol,
-                            "timeframe": tf,
-                            "open": c["o"],
-                            "high": c["h"],
-                            "low": c["l"],
-                            "close": c["c"],
-                            "volume": c["v"],
-                        }
-                        for c in candles
-                    ]
-                    stored_count = await storage.store_candles_bulk(candles_to_store)
-                    logger.debug(f"Stored {stored_count} new candles in database")
-                except Exception as e:
-                    logger.warning(f"Failed to store candles in database: {e}")
-                
-                logger.info(
-                    f"Fetched {len(candles)} candles from Binance",
-                    extra={
-                        "symbol": binance_symbol,
-                        "interval": tf,
-                        "endpoint": endpoint,
-                        "source": binance_base,
-                    },
-                )
-                
-                # Set ETag and cache headers
-                _etag_cache_misses.inc()
-                update_cache_metrics()
-                response.headers["ETag"] = etag
-                response.headers["Cache-Control"] = "max-age=60"
-                
-                return CandleResponse(
-                    candles=candles,
-                    source=f"binance_{endpoint}",
-                    symbol=symbol,
-                    count=len(candles),
-                )
-        
-        except httpx.HTTPStatusError as exc:
-            logger.warning(
-                f"Binance API error on {endpoint}: {exc.response.status_code}",
-                extra={"symbol": binance_symbol, "endpoint": endpoint},
-            )
-            continue
-        except Exception as exc:
-            logger.warning(
-                f"Failed to fetch from {endpoint}: {exc}",
-                extra={"symbol": binance_symbol},
-            )
-            continue
-    
-    # All attempts failed
+        return CandleResponse(
+            candles=candles,
+            source="binance_rest",
+            symbol=symbol,
+            count=len(candles),
+        )
+
     logger.error(
         "Failed to fetch candles from all Binance endpoints",
         extra={"symbol": binance_symbol, "tf": tf},
     )
-    
+
     return CandleResponse(
         candles=[],
         source="error",
         symbol=symbol,
         count=0,
     )
-
-
 @router.get("/market/time")
 async def get_exchange_time() -> Dict[str, Any]:
     """Get current exchange server time from Binance."""

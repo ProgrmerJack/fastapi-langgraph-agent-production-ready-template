@@ -1,6 +1,10 @@
-"""Events API router for bot telemetry and SSE streaming."""
+"""Events API router for bot telemetry and SSE streaming with enhanced spec compliance."""
 
 import asyncio
+import hashlib
+import hmac
+import json
+import os
 from collections import deque
 from datetime import datetime, timezone
 from typing import Any, Dict, Deque, Optional
@@ -13,6 +17,9 @@ from app.core.logging import logger
 from prometheus_client import Counter, Gauge, Histogram
 
 router = APIRouter()
+
+# SSE secret for HMAC signatures (data integrity)
+SSE_SECRET = os.getenv("SSE_SECRET", "change-me-in-production")
 
 # In-memory event buffer for SSE streaming
 _event_buffer: Deque[Dict[str, Any]] = deque(maxlen=1000)
@@ -275,9 +282,22 @@ async def get_recent_events(limit: int = 100) -> Dict[str, Any]:
 
 
 @router.get("/events/stream")
-async def stream_events(request: Request) -> StreamingResponse:
+async def stream_events(request: Request, lastEventId: Optional[int] = None) -> StreamingResponse:
     """
     Server-Sent Events (SSE) endpoint for real-time event streaming.
+
+    Spec-compliant SSE with:
+    - Event IDs for resume support (Last-Event-ID)
+    - Heartbeat comments every 10s
+    - HMAC signatures for data integrity
+    - retry directive for reconnection
+    - Proper id:/event:/data: format
+
+    Query Parameters:
+        - lastEventId: Resume from this event ID (optional)
+
+    Headers:
+        - Last-Event-ID: Alternative way to specify resume point
 
     This endpoint streams all events published via /events/publish to connected clients.
     The dashboard connects to this endpoint to receive real-time bot updates.
@@ -289,21 +309,44 @@ async def stream_events(request: Request) -> StreamingResponse:
     _subscribers.add(subscriber_id)
     _sse_subscriber_gauge.set(len(_subscribers))
 
+    # Check for Last-Event-ID (from header or query param)
+    last_event_id_header = request.headers.get("Last-Event-ID")
+    resume_from_id = None
+
+    if last_event_id_header:
+        try:
+            resume_from_id = int(last_event_id_header)
+        except ValueError:
+            pass
+    elif lastEventId is not None:
+        resume_from_id = lastEventId
+
     logger.info(
         "sse_client_connected",
         subscriber_id=subscriber_id,
         total_subscribers=len(_subscribers),
+        resume_from=resume_from_id,
     )
 
     async def event_generator():
-        """Generate SSE events."""
-        # Send initial buffer to new subscriber
+        """Generate spec-compliant SSE events."""
+        # Send retry directive (client should reconnect after 10s)
+        yield "retry: 10000\n\n"
+
+        # Send initial buffer to new subscriber (or missed events if resuming)
         for event in _event_buffer:
-            evt_type = event.get("type", "message")
-            yield f"event: {evt_type}\ndata: {_format_event(event)}\n\n"
+            event_id = event.get("id", 0)
+            if resume_from_id is None or event_id > resume_from_id:
+                evt_type = event.get("type", "message")
+                # Spec-compliant format: id, event, data
+                yield f"id: {event_id}\n"
+                yield f"event: {evt_type}\n"
+                yield f"data: {_format_event(event)}\n\n"
 
         # Stream new events as they arrive
         last_sent_id = _event_counter - 1
+        last_heartbeat = asyncio.get_event_loop().time()
+        heartbeat_interval = 10.0  # 10 seconds
 
         try:
             while True:
@@ -313,13 +356,24 @@ async def stream_events(request: Request) -> StreamingResponse:
                 if await request.is_disconnected():
                     break
 
+                current_time = asyncio.get_event_loop().time()
+
+                # Send heartbeat comment if needed
+                if current_time - last_heartbeat >= heartbeat_interval:
+                    yield ":heartbeat\n\n"
+                    last_heartbeat = current_time
+
                 # Send new events
                 current_id = _event_counter - 1
                 if current_id > last_sent_id:
                     for event in _event_buffer:
-                        if event.get("id", -1) > last_sent_id:
+                        event_id = event.get("id", -1)
+                        if event_id > last_sent_id:
                             evt_type = event.get("type", "message")
-                            yield f"event: {evt_type}\ndata: {_format_event(event)}\n\n"
+                            # Spec-compliant format
+                            yield f"id: {event_id}\n"
+                            yield f"event: {evt_type}\n"
+                            yield f"data: {_format_event(event)}\n\n"
                     last_sent_id = current_id
 
         finally:
@@ -335,18 +389,34 @@ async def stream_events(request: Request) -> StreamingResponse:
         event_generator(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-cache, no-transform",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",  # Disable nginx buffering
+            "Content-Type": "text/event-stream",
         },
     )
 
 
-def _format_event(event: Dict[str, Any]) -> str:
-    """Format event as JSON string for SSE."""
-    import json
+def _generate_signature(data: Dict[str, Any]) -> str:
+    """Generate HMAC-SHA256 signature for data integrity."""
+    data_json = json.dumps(data, sort_keys=True)
+    signature = hmac.new(
+        SSE_SECRET.encode(),
+        data_json.encode(),
+        hashlib.sha256
+    ).hexdigest()
+    return signature
 
-    return json.dumps(event)
+
+def _format_event(event: Dict[str, Any]) -> str:
+    """Format event as JSON string for SSE with signature."""
+    # Add HMAC signature for integrity
+    event_copy = event.copy()
+    event_copy["signature"] = _generate_signature(
+        {k: v for k, v in event_copy.items() if k != "signature"}
+    )
+    event_copy["server_timestamp"] = datetime.now(timezone.utc).isoformat()
+    return json.dumps(event_copy)
 
 
 @router.get("/events/stats")
