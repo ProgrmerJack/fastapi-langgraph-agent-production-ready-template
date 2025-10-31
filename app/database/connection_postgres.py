@@ -132,12 +132,17 @@ class PostgreSQLConnection:
         # Convert to hypertable (if not already)
         try:
             await conn.execute("""
-                SELECT create_hypertable('candles', 'timestamp', 
+                SELECT create_hypertable('candles', 'timestamp',
                                        if_not_exists => TRUE,
                                        chunk_time_interval => INTERVAL '1 day');
             """)
-        except Exception:
-            pass  # Already a hypertable
+        except asyncpg.exceptions.DuplicateTableError:
+            # Hypertable already exists - this is expected
+            pass
+        except Exception as e:
+            # Log other errors but continue - hypertable creation is optional
+            import logging
+            logging.getLogger(__name__).warning(f"Could not create hypertable: {e}")
         
         # Trades table
         await conn.execute("""
@@ -241,8 +246,13 @@ class PostgreSQLConnection:
                     schedule_interval => INTERVAL '1 hour',
                     if_not_exists => TRUE);
             """)
-        except Exception:
-            pass  # Already exists
+        except (asyncpg.exceptions.DuplicateObjectError, asyncpg.exceptions.UniqueViolationError):
+            # Aggregate or policy already exists - this is expected
+            pass
+        except Exception as e:
+            # Log but don't fail - continuous aggregates are optional optimization
+            import logging
+            logging.getLogger(__name__).debug(f"Could not create 1h aggregate: {e}")
         
         # Daily candle aggregates
         try:
@@ -271,8 +281,13 @@ class PostgreSQLConnection:
                     schedule_interval => INTERVAL '1 day',
                     if_not_exists => TRUE);
             """)
-        except Exception:
+        except (asyncpg.exceptions.DuplicateObjectError, asyncpg.exceptions.UniqueViolationError):
+            # Aggregate or policy already exists - this is expected
             pass
+        except Exception as e:
+            # Log but don't fail - continuous aggregates are optional optimization
+            import logging
+            logging.getLogger(__name__).debug(f"Could not create 1d aggregate: {e}")
     
     async def insert_candles(self, candles: List[Dict[str, Any]]) -> int:
         """

@@ -127,6 +127,9 @@ app.include_router(events_router, tags=["events"])
 # Market router at root level for dashboard
 from app.api.v1.market import router as market_router
 app.include_router(market_router, tags=["market"])
+# SSE router for real-time streaming
+from app.api.v1.sse import router as sse_router
+app.include_router(sse_router, tags=["sse"])
 
 
 @app.get("/")

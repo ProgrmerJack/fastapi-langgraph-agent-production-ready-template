@@ -81,8 +81,17 @@ ENV_FILE = load_env_file()
 
 
 # Parse list values from environment variables
-def parse_list_from_env(env_key, default=None):
-    """Parse a comma-separated list from an environment variable."""
+def parse_list_from_env(env_key: str, default: list[str] | None = None) -> list[str]:
+    """
+    Parse a comma-separated list from an environment variable.
+
+    Args:
+        env_key: Environment variable key to read
+        default: Default value if environment variable is not set
+
+    Returns:
+        List of string values
+    """
     value = os.getenv(env_key)
     if not value:
         return default or []
@@ -97,8 +106,19 @@ def parse_list_from_env(env_key, default=None):
 
 
 # Parse dict of lists from environment variables with prefix
-def parse_dict_of_lists_from_env(prefix, default_dict=None):
-    """Parse dictionary of lists from environment variables with a common prefix."""
+def parse_dict_of_lists_from_env(
+    prefix: str, default_dict: dict[str, list[str]] | None = None
+) -> dict[str, list[str]]:
+    """
+    Parse dictionary of lists from environment variables with a common prefix.
+
+    Args:
+        prefix: Environment variable prefix to search for
+        default_dict: Default dictionary if no matching variables found
+
+    Returns:
+        Dictionary mapping keys to lists of string values
+    """
     result = default_dict or {}
 
     # Look for all env vars with the given prefix
