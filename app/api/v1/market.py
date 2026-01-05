@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 import httpx
 from fastapi import APIRouter, Query, Depends, Header, Response
 from pydantic import BaseModel
-from prometheus_client import Counter, Gauge
+from prometheus_client import Counter, Gauge, REGISTRY
 
 from app.core.logging import logger
 from app.database import DatabaseManager, CandleStorageService
@@ -21,9 +21,29 @@ _candle_cache: Dict[str, tuple[List[Dict[str, Any]], float, str]] = {}  # key ->
 _CACHE_TTL = 30.0  # 30 seconds
 
 # Prometheus metrics for ETag caching
-_etag_cache_hits = Counter("history_cache_hits_total", "Number of 304 Not Modified responses")
-_etag_cache_misses = Counter("history_cache_misses_total", "Number of cache misses (full data served)")
-_etag_cache_hit_ratio = Gauge("history_304_ratio", "Ratio of 304 responses to total requests")
+def _register_counter(name: str, documentation: str):
+    try:
+        # Check if a collector already exists with this name
+        if name in REGISTRY._names_to_collectors:
+            return REGISTRY._names_to_collectors[name]
+        return Counter(name, documentation)
+    except Exception:
+        # Fallback: attempt to return previously registered collector
+        return REGISTRY._names_to_collectors.get(name)
+
+
+def _register_gauge(name: str, documentation: str):
+    try:
+        if name in REGISTRY._names_to_collectors:
+            return REGISTRY._names_to_collectors[name]
+        return Gauge(name, documentation)
+    except Exception:
+        return REGISTRY._names_to_collectors.get(name)
+
+
+_etag_cache_hits = _register_counter("history_cache_hits_total", "Number of 304 Not Modified responses")
+_etag_cache_misses = _register_counter("history_cache_misses_total", "Number of cache misses (full data served)")
+_etag_cache_hit_ratio = _register_gauge("history_304_ratio", "Ratio of 304 responses to total requests")
 
 # Database manager for infinite storage
 _db_manager: Optional[DatabaseManager] = None
@@ -49,8 +69,13 @@ def _get_binance_base_url() -> str:
 
 
 def _normalize_symbol(symbol: str) -> str:
-    """Normalize symbol to Binance format (e.g., BTC-USDT -> BTCUSDT)."""
-    return symbol.replace("-", "").replace("/", "").replace("_", "").upper()
+    """Normalize symbol to Binance format (e.g., BTC-USDT -> BTCUSDT, BTCUSD -> BTCUSDT)."""
+    normalized = symbol.replace("-", "").replace("/", "").replace("_", "").upper()
+    # Handle common symbol mappings for Binance
+    # BTCUSD -> BTCUSDT (Binance uses USDT not USD)
+    if normalized.endswith("USD") and not normalized.endswith("USDT"):
+        normalized = normalized + "T"
+    return normalized
 
 
 
@@ -80,7 +105,39 @@ async def get_candle_storage() -> CandleStorageService:
     global _db_manager, _candle_storage
     
     if _db_manager is None:
-        _db_manager = DatabaseManager("data/hypertrader.db")
+        # Use absolute path to project root database to avoid fragmentation
+        # Apps/services should all read from the same central database
+        import os
+        from pathlib import Path
+        
+        # Get project root - support both local development and Docker deployment
+        # In Docker, the app is deployed to /app/, so we check for a data dir there first
+        # Check DATABASE_PATH env var first, then try common locations
+        db_path = os.getenv("DATABASE_PATH")
+        if not db_path:
+            # Check if running in Docker (app is at /app/)
+            docker_data_path = "/app/data/hypertrader.db"
+            if os.path.isdir("/app/data"):
+                db_path = docker_data_path
+            else:
+                # Local development: traverse up from apps/agent-backend/app/api/v1
+                # Try to find project root by looking for data directory
+                current = Path(__file__).resolve().parent
+                for _ in range(10):  # Max 10 levels up
+                    candidate = current / "data" / "hypertrader.db"
+                    if (current / "data").is_dir():
+                        db_path = str(candidate)
+                        break
+                    parent = current.parent
+                    if parent == current:  # Reached filesystem root
+                        break
+                    current = parent
+                else:
+                    # Fallback to relative path from app root
+                    db_path = "/app/data/hypertrader.db"
+        
+        logger.info(f"Using database at: {db_path}")
+        _db_manager = DatabaseManager(db_path)
         await _db_manager.connect()
         await _db_manager.initialize_schema()
         _candle_storage = CandleStorageService(_db_manager)

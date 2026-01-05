@@ -21,12 +21,14 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     libpq-dev \
     && pip install --upgrade pip \
-    && pip install uv \
-    && rm -rf /var/lib/apt/lists/*
+    && pip install uv
 
-# Copy pyproject.toml first to leverage Docker cache
+# Copy pyproject.toml
 COPY pyproject.toml .
-RUN uv venv && . .venv/bin/activate && uv pip install -e .
+
+# Install dependencies directly into system python
+# usage of --system flag with uv pip install ensure it installs to the global environment
+RUN uv pip install --system -e .
 
 # Copy the application
 COPY . .
@@ -49,4 +51,4 @@ RUN echo "Using ${APP_ENV} environment"
 
 # Command to run the application
 ENTRYPOINT ["/app/scripts/docker-entrypoint.sh"]
-CMD ["/app/.venv/bin/uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"] 
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"] 

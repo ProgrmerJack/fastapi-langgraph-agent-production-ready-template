@@ -1,9 +1,15 @@
 """
 SQLite-based database manager for development.
 Can be upgraded to PostgreSQL/TimescaleDB for production.
+
+Note: On Docker with Windows volume mounts, SQLite cannot open files directly
+on the mounted volume due to file locking incompatibility. We use a native
+container path (/tmp/hypertrader/) for SQLite operations.
 """
 
 import aiosqlite
+import shutil
+import sqlite3
 from typing import Optional
 import logging
 from contextlib import asynccontextmanager
@@ -11,6 +17,82 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Native container path for SQLite (avoids Windows volume mount issues)
+NATIVE_DB_DIR = Path("/tmp/hypertrader")
+NATIVE_DB_PATH = NATIVE_DB_DIR / "hypertrader.db"
+
+
+def _get_sqlite_path(db_path: str = "data/hypertrader.db") -> Path:
+    """
+    Get the appropriate SQLite database path.
+    
+    On Docker with Windows volume mounts, SQLite files cannot be opened
+    due to file locking incompatibility. We detect this and use a native
+    container path instead.
+    
+    Args:
+        db_path: Path to SQLite database
+        
+    Returns:
+        Path to use for SQLite operations
+    """
+    mounted_path = Path(db_path)
+    
+    # Check if we're in Docker (presence of /.dockerenv or /run/.containerenv)
+    in_docker = Path("/.dockerenv").exists() or Path("/run/.containerenv").exists()
+    
+    if not in_docker:
+        # Not in Docker, use the normal path
+        mounted_path.parent.mkdir(parents=True, exist_ok=True)
+        return mounted_path
+    
+    # In Docker - Windows volume mounts don't support SQLite's WAL mode
+    # due to file locking incompatibility. The issue manifests when trying
+    # to use WAL mode on an EXISTING database file (new files work).
+    # We test on the actual database file if it exists.
+    try:
+        mounted_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        if mounted_path.exists():
+            # Test WAL mode on the existing database - this is what fails on Windows volumes
+            conn = sqlite3.connect(str(mounted_path), timeout=1.0)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.close()
+        else:
+            # Create test on a temporary file to check if volume supports WAL
+            test_path = mounted_path.parent / "_sqlite_test.db"
+            conn = sqlite3.connect(str(test_path), timeout=1.0)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("CREATE TABLE IF NOT EXISTS _test (id INTEGER)")
+            conn.execute("INSERT OR REPLACE INTO _test VALUES (1)")
+            conn.commit()
+            conn.close()
+            
+            # Clean up test file and its WAL/SHM files
+            for suffix in ["", "-wal", "-shm"]:
+                try:
+                    (test_path.parent / (test_path.name + suffix)).unlink()
+                except FileNotFoundError:
+                    pass
+        
+        # WAL mode worked - mounted path is safe to use
+        logger.info(f"Using mounted SQLite path: {mounted_path}")
+        return mounted_path
+    except (sqlite3.OperationalError, OSError) as e:
+        # Windows volume mount issue detected - use native path
+        # WAL mode doesn't work over Windows -> Docker volume mounts
+        logger.warning(f"Windows volume mount issue detected ({e}), using native path: {NATIVE_DB_PATH}")
+        NATIVE_DB_DIR.mkdir(parents=True, exist_ok=True)
+        
+        # Copy existing DB from mounted path if it exists and native doesn't
+        if mounted_path.exists() and not NATIVE_DB_PATH.exists():
+            try:
+                shutil.copy2(str(mounted_path), str(NATIVE_DB_PATH))
+                logger.info(f"Copied database from {mounted_path} to {NATIVE_DB_PATH}")
+            except Exception as e:
+                logger.warning(f"Could not copy database: {e}")
+        
+        return NATIVE_DB_PATH
 
 class DatabaseManager:
     """
@@ -25,11 +107,13 @@ class DatabaseManager:
         Args:
             database_path: Path to SQLite database file
         """
-        self.database_path = database_path
+        # Get the appropriate path (handles Docker volume mount issues)
+        resolved_path = _get_sqlite_path(database_path)
+        self.database_path = str(resolved_path)
         self._connection: Optional[aiosqlite.Connection] = None
         
         # Ensure data directory exists
-        Path(database_path).parent.mkdir(parents=True, exist_ok=True)
+        resolved_path.parent.mkdir(parents=True, exist_ok=True)
     
     async def connect(self):
         """Establish database connection."""
